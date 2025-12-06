@@ -1,13 +1,181 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + TS</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FaceBlur</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: white;
+      color: #111;
+      width: 360px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      text-align: center;
+      margin: 0 0 24px;
+      color: #333;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      background: #f8f9fa;
+      border-radius: 12px;
+      margin-bottom: 20px;
+    }
+    .toggle-row label {
+      font-size: 16px;
+      font-weight: 500;
+    }
+    .switch {
+      position: relative;
+      width: 52px;
+      height: 30px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #ccc;
+      border-radius: 30px;
+      transition: .3s;
+    }
+    .slider:before {
+      content: "";
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      left: 3px;
+      top: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: .3s;
+      box-shadow: 0 1px 3px rgba(0,0,0.3);
+    }
+    input:checked + .slider { background: #3b82f6; }
+    input:checked + .slider:before { transform: translateX(22px); }
+
+    .status {
+      margin-left: 12px;
+      font-weight: 600;
+      color: #16a34a;
+    }
+    .status.off { color: #dc2626; }
+
+    .add-btn {
+      width: 100%;
+      padding: 16px;
+      font-size: 17px;
+      font-weight: 600;
+      color: #333;
+      background: #f1f5f9;
+      border: 2px dashed #94a3b8;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .add-btn:hover {
+      background: #e2e8f0;
+      border-color: #64748b;
+    }
+
+    .grid {
+      margin-top: 20px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .face {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .face img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .remove {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 28px;
+      height: 28px;
+      background: rgba(239,68,68,0.9);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .face:hover .remove {
+      opacity: 1;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>FaceBlur</h1>
+
+  <div class="toggle-row">
+    <label>Blur faces automatically</label>
+    <div style="display:flex;align-items:center">
+      <label class="switch">
+        <input type="checkbox" id="enableToggle">
+        <span class="slider"></span>
+      </label>
+      <span class="status" id="status">Active</span>
+    </div>
+  </div>
+
+  <button class="add-btn" id="uploadBtn">
+    + Add photos of people to blur
+  </button>
+  <div style="margin-top: 12px; text-align: center;">
+    <button id="clearAllBtn" style="
+      padding: 10px 20px;
+      font-size: 14px;
+      color: #dc2626;
+      background: transparent;
+      border: 1.5px solid #fca5a5;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    ">
+      Clear All Photos
+    </button>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" multiple style="display:none">
+
+  <div class="grid" id="referenceImages"></div>
+
+  <footer>
+    Click any blurred image on a website to reveal it temporarily
+  </footer>
+
+  <script type="module" src="/src/popup.ts"></script>
+</body>
 </html>
