@@ -1,133 +1,134 @@
-import * as tf from '@tensorflow/tfjs';
-import * as faceDetection from '@tensorflow-models/face-detection';
-import type {  Detection, FaceFingerprint } from './types';
-let detector: faceDetection.FaceDetector | null = null;
+import * as faceapi from 'face-api.js';
+import type { FaceFingerprint } from './types';
 
-// Initialize TensorFlow detector
+let modelsLoaded = false;
+
+// Model URL - use CDN for easy setup
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+
+// Initialize face-api.js models
 export async function initializeDetector(): Promise<void> {
-  if (detector) return;
+  if (modelsLoaded) return;
   
-  await tf.ready();
+  console.log('Loading face-api.js models...');
   
-  const model = faceDetection.SupportedModels.MediaPipeFaceDetector;
-  const detectorConfig = {
-    runtime: 'tfjs',
-    maxFaces: 10
-  }as any;
-  
-  detector = await faceDetection.createDetector(model, detectorConfig);
+  try {
+    // Load all required models in parallel
+    await Promise.all([
+      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    ]);
+    
+    modelsLoaded = true;
+    console.log('face-api.js models loaded successfully');
+  } catch (error) {
+    console.error('Failed to load face-api.js models:', error);
+    throw error;
+  }
 }
 
-// Detect faces in an image
+// Detect faces in an image and return descriptors
 export async function detectFaces(image: HTMLImageElement) {
-  if (!detector) await initializeDetector();
+  if (!modelsLoaded) await initializeDetector();
   
-  const faces = await detector!.estimateFaces(image, {
-    flipHorizontal: false
-  });
-  
-  return faces.map(face => ({
-    box: face.box,
-    keypoints: face.keypoints || []
-  }));
+  try {
+    // Detect all faces with landmarks and descriptors
+    const detections = await faceapi
+      .detectAllFaces(image, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+      .withFaceLandmarks()
+      .withFaceDescriptors();
+    
+    if (!detections || detections.length === 0) {
+      return [];
+    }
+    
+    // Convert to our format
+    return detections.map(detection => ({
+      box: {
+        xMin: detection.detection.box.x,
+        yMin: detection.detection.box.y,
+        width: detection.detection.box.width,
+        height: detection.detection.box.height
+      },
+      descriptor: Array.from(detection.descriptor), // 128-d vector
+      landmarks: detection.landmarks.positions.map(p => ({ x: p.x, y: p.y }))
+    }));
+  } catch (error) {
+    console.error('Face detection failed:', error);
+    return [];
+  }
 }
 
-// Create unique fingerprint from face
-export function createFingerprint(detection:Detection) {
-  // Normalize keypoints relative to bounding box
-  const normalizedLandmarks = detection.keypoints.map(kp => [
-    (kp.x - detection.box.xMin) / detection.box.width,
-    (kp.y - detection.box.yMin) / detection.box.height
-  ]);
-  
-  // Create perceptual hash
-  const hash = createLandmarkHash(normalizedLandmarks);
-  
+// Create fingerprint from detection (now using 128-d descriptor)
+export function createFingerprint(detection: any): FaceFingerprint {
   return {
-    landmarks: normalizedLandmarks,
-    hash,
-    boundingBox: detection.box
+    descriptor: detection.descriptor, // 128-dimensional face encoding
+    box: detection.box,
+    landmarks: detection.landmarks || []
   };
 }
 
-// Compare two faces
-//@ts-ignore
-export function compareFaces(fp1, fp2, threshold = 0.15): boolean {
-  // Quick hash comparison
-  if (fp1.hash === fp2.hash) return true;
-  
-  // Hamming distance for hashes
-  const hashSimilarity = hammingDistance(fp1.hash, fp2.hash) / 
-    (fp1.hash.length * 4);
-  
-  if (hashSimilarity < 0.3) {
-    // Compare landmarks
-    const landmarkDistance = euclideanDistance(
-      fp1.landmarks.flat(),
-      fp2.landmarks.flat()
-    );
-    
-    return landmarkDistance < threshold;
+// Compare two face descriptors using Euclidean distance
+export function compareFaces(fp1: FaceFingerprint, fp2: FaceFingerprint, threshold = 0.6): boolean {
+  if (!fp1.descriptor || !fp2.descriptor) {
+    console.warn('Missing descriptor for comparison');
+    return false;
   }
   
-  return false;
+  // Use face-api.js built-in Euclidean distance calculation
+  const distance = faceapi.euclideanDistance(fp1.descriptor, fp2.descriptor);
+  
+  // Industry standard: distance < 0.6 means same person
+  return distance < threshold;
 }
 
-// Simple perceptual hash from landmarks (64-bit)
-function createLandmarkHash(landmarks: number[][]): string {
-    let hash = '';
-    for (const [x, y] of landmarks) {
-      const binX = x > 0.5 ? '1' : '0';
-      const binY = y > 0.5 ? '1' : '0';
-      hash += binX + binY;
-    }
-    return hash.padEnd(64, '0').slice(0, 64); // fixed length
-  }
-  
-  // Hamming distance between two binary strings
-  function hammingDistance(a: string, b: string): number {
-    let distance = 0;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i] !== b[i]) distance++;
-    }
-    return distance;
-  }
-  
-  // Euclidean distance between two flattened arrays
-  function euclideanDistance(arr1: number[], arr2: number[]): number {
-    let sum = 0;
-    for (let i = 0; i < arr1.length; i++) {
-      sum += (arr1[i] - arr2[i]) ** 2;
-    }
-    return Math.sqrt(sum) / arr1.length; // normalized
-  }
-  
-  // Extract fingerprint from a dataURL (used by popup)
-  export async function extractFaceFromImage(dataUrl: string): Promise<FaceFingerprint | null> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = async () => {
-        try {
-          if (!detector) await initializeDetector();
-          const faces = await detector!.estimateFaces(img, { flipHorizontal: false });
-          
-          if (faces.length === 0) {
-            resolve(null);
-            return;
-          }
-  
-          // Use the first (largest) face
-          const face = faces[0];
-          const fp = createFingerprint({
-            box: face.box,
-            keypoints: face.keypoints || []
-          });
-          resolve(fp);
-        } catch (err) {
-          console.error('Failed to extract face:', err);
+// Extract fingerprint from a dataURL (used by popup)
+export async function extractFaceFromImage(dataUrl: string): Promise<FaceFingerprint | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    
+    img.onload = async () => {
+      try {
+        if (!modelsLoaded) await initializeDetector();
+        
+        // Detect single face with all features
+        const detection = await faceapi
+          .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        
+        if (!detection) {
+          console.log('No face detected in reference image');
           resolve(null);
+          return;
         }
-      };
-      img.src = dataUrl;
-    });
-  }
+        
+        // Create fingerprint from detection
+        const fingerprint: FaceFingerprint = {
+          descriptor: Array.from(detection.descriptor),
+          box: {
+            xMin: detection.detection.box.x,
+            yMin: detection.detection.box.y,
+            width: detection.detection.box.width,
+            height: detection.detection.box.height
+          },
+          landmarks: detection.landmarks.positions.map(p => ({ x: p.x, y: p.y }))
+        };
+        
+        console.log('Face extracted successfully, descriptor length:', fingerprint.descriptor.length);
+        resolve(fingerprint);
+      } catch (err) {
+        console.error('Failed to extract face:', err);
+        resolve(null);
+      }
+    };
+    
+    img.onerror = () => {
+      console.error('Failed to load image');
+      resolve(null);
+    };
+    
+    img.src = dataUrl;
+  });
+}
