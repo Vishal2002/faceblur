@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "FaceBlur - Privacy Face Blocker",
+  "name": "FaceBlur - Automatic Face Blurring",
   "version": "1.0.0",
-  "description": "Automatically blur specific faces in images while browsing. 100% local processing.",
+  "description": "Automatically blur specific faces while browsing. 100% local processing.",
 
   "permissions": [
     "storage",
