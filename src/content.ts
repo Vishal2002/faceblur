@@ -5,6 +5,14 @@ let referenceFingerprints: any[] = [];
 const processedImages = new WeakSet<HTMLImageElement>();
 const failedImages = new WeakSet<HTMLImageElement>();
 
+// Performance settings
+const MIN_IMAGE_SIZE = 100;
+const MAX_CONCURRENT = 5; // Increased for speed
+const PROCESS_DELAY = 20; // Reduced delay
+
+let processingQueue: HTMLImageElement[] = [];
+let isProcessing = false;
+
 // Initialize on page load
 (async () => {
   console.log('FaceBlur: Initializing...');
@@ -25,8 +33,7 @@ const failedImages = new WeakSet<HTMLImageElement>();
     console.log(`FaceBlur: Enabled=${isEnabled}, References=${referenceFingerprints.length}`);
     
     if (isEnabled && referenceFingerprints.length > 0) {
-      // Delay initial scan to let page load
-      setTimeout(() => scanPage(), 1000);
+      setTimeout(() => scanPage(), 1500);
     }
   });
   
@@ -41,44 +48,70 @@ async function scanPage() {
   }
   
   const images = document.querySelectorAll('img');
-  console.log(`FaceBlur: Scanning ${images.length} images`);
+  console.log(`FaceBlur: Found ${images.length} images`);
   
+  // Filter images
+  const imagesToProcess = Array.from(images).filter(img => {
+    return !processedImages.has(img) && 
+           !failedImages.has(img) &&
+           img.complete &&
+           img.naturalWidth >= MIN_IMAGE_SIZE &&
+           img.naturalHeight >= MIN_IMAGE_SIZE;
+  });
+  
+  console.log(`FaceBlur: ${imagesToProcess.length} images to process`);
+  
+  processingQueue.push(...imagesToProcess);
+  processQueue();
+}
+
+// Process queue with concurrency
+async function processQueue() {
+  if (isProcessing) return;
+  if (processingQueue.length === 0) return;
+  
+  isProcessing = true;
   let processed = 0;
   let blurred = 0;
   
-  for (const img of Array.from(images)) {
-    if (!processedImages.has(img) && !failedImages.has(img)) {
-      const result = await processImage(img);
+  while (processingQueue.length > 0) {
+    const batch = processingQueue.splice(0, MAX_CONCURRENT);
+    
+    const results = await Promise.all(
+      batch.map(img => processImage(img))
+    );
+    
+    results.forEach(result => {
       if (result) {
         processed++;
         if (result.blurred) blurred++;
       }
+    });
+    
+    if (processingQueue.length > 0) {
+      await new Promise(resolve => setTimeout(resolve, PROCESS_DELAY));
     }
   }
   
-  console.log(`FaceBlur: Processed ${processed} images, blurred ${blurred}`);
+  isProcessing = false;
+  console.log(`FaceBlur: Complete - Processed ${processed}, Blurred ${blurred}`);
 }
 
-// Create a canvas from image (handles CORS)
+// Create canvas from image (CORS check)
 function createCanvasFromImage(img: HTMLImageElement): HTMLCanvasElement | null {
   try {
     const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: false });
     
     if (!ctx) return null;
     
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
-    
-    // Try to draw the image
     ctx.drawImage(img, 0, 0);
-    
-    // Test if we can read pixels (will throw on CORS)
     ctx.getImageData(0, 0, 1, 1);
     
     return canvas;
   } catch (error) {
-    // CORS error - can't process this image
     return null;
   }
 }
@@ -87,41 +120,6 @@ function createCanvasFromImage(img: HTMLImageElement): HTMLCanvasElement | null 
 async function processImage(img: HTMLImageElement): Promise<{ blurred: boolean } | null> {
   if (processedImages.has(img) || failedImages.has(img)) return null;
   
-  // Wait for image to load with timeout
-  if (!img.complete || img.naturalWidth === 0) {
-    return new Promise((resolve) => {
-      let attempts = 0;
-      const maxAttempts = 10;
-      
-      const checkLoad = () => {
-        attempts++;
-        
-        if (img.complete && img.naturalWidth > 0) {
-          processImage(img).then(resolve);
-        } else if (attempts < maxAttempts) {
-          setTimeout(checkLoad, 500);
-        } else {
-          failedImages.add(img);
-          resolve(null);
-        }
-      };
-      
-      img.addEventListener('load', () => processImage(img).then(resolve), { once: true });
-      img.addEventListener('error', () => {
-        failedImages.add(img);
-        resolve(null);
-      }, { once: true });
-      
-      setTimeout(checkLoad, 100);
-    });
-  }
-  
-  // Skip tiny images
-  if (img.naturalWidth < 80 || img.naturalHeight < 80) {
-    processedImages.add(img);
-    return { blurred: false };
-  }
-  
   // Skip if already blurred
   if (img.dataset.faceblurBlurred === 'true') {
     processedImages.add(img);
@@ -129,11 +127,9 @@ async function processImage(img: HTMLImageElement): Promise<{ blurred: boolean }
   }
   
   try {
-    // Try to create canvas (handles CORS check)
+    // CORS check
     const canvas = createCanvasFromImage(img);
-    
     if (!canvas) {
-      // CORS blocked - skip this image
       failedImages.add(img);
       return null;
     }
@@ -146,7 +142,7 @@ async function processImage(img: HTMLImageElement): Promise<{ blurred: boolean }
       return { blurred: false };
     }
     
-    // Check if any face matches reference
+    // Check for matches
     let shouldBlur = false;
     
     for (const detection of detections) {
@@ -155,7 +151,6 @@ async function processImage(img: HTMLImageElement): Promise<{ blurred: boolean }
       for (const refFingerprint of referenceFingerprints) {
         if (compareFaces(detectedFingerprint, refFingerprint)) {
           shouldBlur = true;
-          console.log('FaceBlur: Match found!');
           break;
         }
       }
@@ -165,12 +160,11 @@ async function processImage(img: HTMLImageElement): Promise<{ blurred: boolean }
     
     if (shouldBlur) {
       blurImage(img);
-      processedImages.add(img);
-      return { blurred: true };
+      console.log('FaceBlur: Match found!');
     }
     
     processedImages.add(img);
-    return { blurred: false };
+    return { blurred: shouldBlur };
   } catch (error) {
     console.error('FaceBlur: Error processing image:', error);
     failedImages.add(img);
@@ -178,21 +172,17 @@ async function processImage(img: HTMLImageElement): Promise<{ blurred: boolean }
   }
 }
 
-// Blur an image with click-to-unblur
+// Blur an image
 function blurImage(img: HTMLImageElement) {
-  // Skip if already blurred
   if (img.dataset.faceblurBlurred === 'true') return;
+  
+  img.dataset.faceblurBlurred = 'true';
+  img.dataset.faceblurOriginalFilter = img.style.filter || 'none';
   
   img.style.filter = 'blur(20px)';
   img.style.transition = 'filter 0.3s ease';
   img.style.cursor = 'pointer';
   img.title = 'Click to temporarily unblur';
-  img.dataset.faceblurBlurred = 'true';
-  
-  // Store original filter in case there was one
-  if (!img.dataset.faceblurOriginalFilter) {
-    img.dataset.faceblurOriginalFilter = img.style.filter || 'none';
-  }
   
   const toggleBlur = (e: Event) => {
     e.preventDefault();
@@ -207,7 +197,6 @@ function blurImage(img: HTMLImageElement) {
     }
   };
   
-  // Remove old listeners
   img.removeEventListener('click', toggleBlur);
   img.addEventListener('click', toggleBlur);
 }
@@ -222,23 +211,36 @@ function unblurImage(img: HTMLImageElement) {
   delete img.dataset.faceblurOriginalFilter;
 }
 
-// Watch for new images (dynamic content)
+// Watch for new images (throttled)
+let observerTimeout: number | null = null;
 function observeNewImages() {
-  const observer = new MutationObserver((mutations) => {
+  const observer = new MutationObserver(() => {
     if (!isEnabled || referenceFingerprints.length === 0) return;
     
-    for (const mutation of mutations) {
-      for (const node of Array.from(mutation.addedNodes)) {
-        if (node instanceof HTMLImageElement) {
-          setTimeout(() => processImage(node), 100);
-        } else if (node instanceof HTMLElement) {
-          const images = node.querySelectorAll('img');
-          images.forEach(img => {
-            setTimeout(() => processImage(img), 100);
-          });
+    if (observerTimeout) return;
+    
+    observerTimeout = window.setTimeout(() => {
+      observerTimeout = null;
+      
+      const images = document.querySelectorAll('img');
+      const newImages: HTMLImageElement[] = [];
+      
+      images.forEach(img => {
+        if (!processedImages.has(img) && 
+            !failedImages.has(img) &&
+            img.complete &&
+            img.naturalWidth >= MIN_IMAGE_SIZE &&
+            img.naturalHeight >= MIN_IMAGE_SIZE) {
+          newImages.push(img);
         }
+      });
+      
+      if (newImages.length > 0) {
+        console.log(`FaceBlur: ${newImages.length} new images detected`);
+        processingQueue.push(...newImages);
+        processQueue();
       }
-    }
+    }, 300);
   });
   
   observer.observe(document.body, {
@@ -255,9 +257,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     isEnabled = message.enabled;
     
     if (!isEnabled) {
-      // Unblur all images
       document.querySelectorAll('img[data-faceblur-blurred="true"]')
         .forEach(img => unblurImage(img as HTMLImageElement));
+      processingQueue = [];
       console.log('FaceBlur: Disabled and unblurred all');
     } else {
       console.log('FaceBlur: Enabled, scanning page...');
@@ -265,6 +267,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
   } else if (message.action === 'scanPage') {
     console.log('FaceBlur: Manual scan requested');
+    processingQueue = [];
     setTimeout(() => scanPage(), 500);
   } else if (message.action === 'updateReferences') {
     referenceFingerprints = message.fingerprints || [];
@@ -275,7 +278,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .forEach(img => {
         unblurImage(img as HTMLImageElement);
         processedImages.delete(img as HTMLImageElement);
+        failedImages.delete(img as HTMLImageElement);
       });
+    
+    processingQueue = [];
     
     if (isEnabled && referenceFingerprints.length > 0) {
       setTimeout(() => scanPage(), 500);
