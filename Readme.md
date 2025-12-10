@@ -11,61 +11,6 @@ A privacy-focused Chrome extension that automatically blurs specific faces in im
 - 🔄 **Toggle On/Off** - Enable or disable anytime
 - 📘 **TypeScript** - Full type safety
 
-## Setup Instructions
-
-### 1. Create Vite + TypeScript Project
-
-```bash
-npm create vite@latest faceblur -- --template vanilla-ts
-cd faceblur
-```
-
-### 2. Install Dependencies
-
-```bash
-# TensorFlow and models
-npm install @tensorflow/tfjs @tensorflow-models/face-detection @tensorflow-models/face-landmarks-detection
-
-# Extension build tools
-npm install -D @crxjs/vite-plugin @types/chrome
-
-# Image processing
-npm install pixelmatch pngjs
-```
-
-### 3. Project Structure
-
-```
-faceblur/
-├── public/
-│   └── icons/           # Extension icons (16x16, 48x48, 128x128)
-├── src/
-│   ├── content.ts       # Content script
-│   ├── popup.ts         # Popup script
-│   ├── types.ts         # TypeScript types
-│   └── faceRecognition.ts  # Face recognition logic
-├── index.html           # Popup UI
-├── manifest.json        # Extension manifest
-├── vite.config.ts       # Vite configuration
-├── tsconfig.json        # TypeScript config
-└── package.json
-```
-
-### 4. Build and Load
-
-```bash
-# Development with hot reload
-npm run dev
-
-# Production build
-npm run build
-
-# Load in Chrome
-# 1. Go to chrome://extensions/
-# 2. Enable "Developer mode"
-# 3. Click "Load unpacked"
-# 4. Select the dist/ folder
-```
 
 ## Usage
 
@@ -91,7 +36,7 @@ Uses **perceptual hashing** and **facial feature comparison**:
 ## Technical Details
 
 - **Framework**: Vite + TypeScript
-- **Face Detection**: TensorFlow.js + MediaPipe
+- **Face Detection**: face-api.js
 - **Matching**: Perceptual hashing + landmark comparison
 - **Browser**: Chrome (Manifest V3)
 - **Models**: Downloaded automatically by TensorFlow.js
